@@ -4,7 +4,6 @@ metadata:
   name: hollow-node
   labels:
     name: hollow-node
-    node-kind: hollow-node
     autoscaling.k8s.io/nodegroup: kubernetes-minion-group
 spec:
   replicas: {{numreplicas}}
