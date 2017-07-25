@@ -42,7 +42,7 @@ const (
 	largeScaleDownTimeout = 20 * time.Minute
 	minute                = 1 * time.Minute
 
-	maxNodes = 100
+	maxNodes = 20
 )
 
 type clusterPredicates struct {
@@ -149,13 +149,13 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	It("should scale up twice [Feature:ClusterAutoscalerScalability2]", func() {
 		perNodeReservation := int(float64(memCapacityMb) * 0.7)
 
-		replicas := 70
-		replicas2 := 25
+		replicas := 30
+		replicas2 := 15
 
 		glog.Infof("cores per node: %v", coresPerNode)
 
 		// saturate cluster
-		reservationCleanup := ReserveMemory(f, "some-pod", nodeCount*2, nodeCount*perNodeReservation, true, scaleUpTimeout)
+		reservationCleanup := ReserveMemory(f, "some-pod", nodeCount, nodeCount*perNodeReservation, true, scaleUpTimeout)
 		defer reservationCleanup()
 		framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, c))
 
@@ -213,8 +213,8 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	It("should scale down underutilized nodes [Feature:ClusterAutoscalerScalability4]", func() {
 		underutilizedReservation := int64(float64(memCapacityMb) * 0.01)
 		fullReservation := int64(float64(memCapacityMb) * 0.8)
-		perNodeReplicas := 10
-		totalNodes := 100
+		perNodeReplicas := 2
+		totalNodes := 20
 
 		// resize cluster to totalNodes
 		newSizes := map[string]int{
@@ -271,7 +271,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	It("shouldn't scale down with underutilized nodes due to host port conflicts [Feature:ClusterAutoscalerScalability5]", func() {
 		fullReservation := int(float64(memCapacityMb) * 0.9)
 		hostPortPodReservation := int(float64(memCapacityMb) * 0.3)
-		totalNodes := 100
+		totalNodes := 20
 		reservedPort := 4321
 
 		// resize cluster to totalNodes

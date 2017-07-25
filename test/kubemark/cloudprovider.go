@@ -36,6 +36,7 @@ import (
 const (
 	namespaceKubemark = "kubemark"
 	hollowNodeName    = "hollow-node"
+	kindLabel         = "node-kind"
 	nodeGroupLabel    = "autoscaling.k8s.io/nodegroup"
 )
 
@@ -222,10 +223,10 @@ func (kubemarkProvider *Provider) getNodeGroupByName(nodeGroup string) *apiv1.Re
 	return nil
 }
 
-func (kubemarkProvider *Provider) getReplicationControllerByName(name string) *apiv1.ReplicationController {
+func (kubemarkProvider *Provider) getReplicationControllerByKind(kind string) *apiv1.ReplicationController {
 	for _, obj := range kubemarkProvider.externalCluster.rcLister.GetStore().List() {
 		rc := obj.(*apiv1.ReplicationController)
-		if rc.ObjectMeta.Name == name {
+		if rc.ObjectMeta.Labels[kindLabel] == kind {
 			return rc
 		}
 	}
@@ -250,14 +251,14 @@ func (kubemarkProvider *Provider) addNodeToNodeGroup(nodeGroup string) error {
 	}
 	node := templateCopy.(*apiv1.ReplicationController)
 	node.Name = nodeGroup + "-" + RandomString(6)
-	node.Labels = map[string]string{nodeGroupLabel: nodeGroup, "name": node.Name}
+	node.Labels = map[string]string{nodeGroupLabel: nodeGroup, "name": node.Name, kindLabel: hollowNodeName}
 	node.Spec.Template.Labels = node.Labels
 	_, err = kubemarkProvider.externalCluster.client.CoreV1().ReplicationControllers(node.Namespace).Create(node)
 	return err
 }
 
 func (kubemarkProvider *Provider) getNodeTemplate() (*apiv1.ReplicationController, error) {
-	if hollowNode := kubemarkProvider.getReplicationControllerByName(hollowNodeName); hollowNode != nil {
+	if hollowNode := kubemarkProvider.getReplicationControllerByKind(hollowNodeName); hollowNode != nil {
 		nodeTemplate := &apiv1.ReplicationController{
 			Spec: apiv1.ReplicationControllerSpec{
 				Template: hollowNode.Spec.Template,
@@ -286,7 +287,7 @@ func (kubemarkCluster *KubemarkCluster) removeUnneededNodes(oldObj interface{}, 
 			if kubemarkCluster.nodesToDelete[newNode.Name] {
 				kubemarkCluster.nodesToDelete[newNode.Name] = false
 				if err := kubemarkCluster.client.CoreV1().Nodes().Delete(newNode.Name, &metav1.DeleteOptions{}); err != nil {
-					glog.Error("Failed to delete node %s from kubemark cluster", newNode.Name)
+					glog.Errorf("Failed to delete node %s from kubemark cluster: %s", newNode.Name, err)
 				}
 			}
 			return
