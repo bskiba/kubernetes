@@ -52,16 +52,7 @@ func ResizeGroup(group string, size int32) error {
 		client := autoscaling.New(session.New())
 		return awscloud.ResizeInstanceGroup(client, group, int(size))
 	} else if TestContext.Provider == "kubemark" {
-		curr_size, err := GroupSize(group)
-		if err != nil {
-			return err
-		}
-		if curr_size > int(size) {
-			return TestContext.CloudConfig.KubemarkProvider.RemoveNodesFromNodeGroup(group, curr_size-int(size))
-		} else if curr_size < int(size) {
-			return TestContext.CloudConfig.KubemarkProvider.AddNodesToNodeGroup(group, int(size)-curr_size)
-		}
-		return nil
+		return TestContext.CloudConfig.KubemarkProvider.SetNodeGroupSize(group, int(size))
 	} else {
 		return fmt.Errorf("Provider does not support InstanceGroups")
 	}

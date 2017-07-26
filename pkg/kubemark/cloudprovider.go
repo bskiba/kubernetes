@@ -96,14 +96,11 @@ func NewProvider(externalClient kubeclient.Interface, kubemarkClient kubeclient.
 		}
 	}
 	kubemarkInformerFactory.Start(stop)
-	for _, synced := range kubemarkInformerFactory.WaitForCacheSync(stop) {
-		if !synced {
-			return nil, fmt.Errorf("failed to sync data of external cluster")
-		}
-	}
 	manager.kubemarkCluster.nodeLister.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: manager.kubemarkCluster.removeUnneededNodes,
-	})
+                UpdateFunc: manager.kubemarkCluster.removeUnneededNodes,
+        })
+	go manager.kubemarkCluster.nodeLister.Informer().Run(stop)
+	cache.WaitForCacheSync(stop, manager.kubemarkCluster.nodeLister.Informer().HasSynced)
 
 	rand.Seed(time.Now().UTC().UnixNano())
 
@@ -170,11 +167,11 @@ func (kubemarkProvider *Provider) SetNodeGroupSize(nodeGroup string, size int) e
 	if err != nil {
 		return err
 	}
-	switch delta := currSize - size; {
+	switch delta := size - currSize; {
 	case delta < 0:
-		return kubemarkProvider.removeNodesFromNodeGroup(nodeGroup, delta)
+		return kubemarkProvider.removeNodesFromNodeGroup(nodeGroup, -delta)
 	case delta > 0:
-		return kubemarkProvider.addNodesToNodeGroup(nodeGroup, -delta)
+		return kubemarkProvider.addNodesToNodeGroup(nodeGroup, delta)
 	}
 	return nil
 }
@@ -298,10 +295,12 @@ func (kubemarkProvider *Provider) getNodeTemplate() (*apiv1.ReplicationControlle
 	if err != nil {
 		return nil, err
 	}
+	glog.Infof("%s", podName)
 	hollowNodeName, err := kubemarkProvider.getNodeNameForPod(podName)
 	if err != nil {
 		return nil, err
 	}
+	glog.Infof("%s", hollowNodeName)
 	if hollowNode := kubemarkProvider.getReplicationControllerByName(hollowNodeName); hollowNode != nil {
 		nodeTemplate := &apiv1.ReplicationController{
 			Spec: apiv1.ReplicationControllerSpec{
@@ -316,7 +315,7 @@ func (kubemarkProvider *Provider) getNodeTemplate() (*apiv1.ReplicationControlle
 
 		return nodeTemplate, nil
 	}
-	return nil, fmt.Errorf("can't get hollow node template")
+	return nil, fmt.Errorf("can't get hollow node template, %s, %s", podName, hollowNodeName)
 }
 
 func (kubemarkCluster *kubemarkCluster) getHollowNodeName() (string, error) {

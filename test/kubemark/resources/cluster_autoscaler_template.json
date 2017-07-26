@@ -22,6 +22,7 @@
                     "--logtostderr=true",
                     "--write-status-configmap=true",
                     "--cloud-provider=kubemark",
+		    "--verify-unschedulable-pods=false",
                     "--nodes=1:1000:kubernetes-minion-group",
                     "--cloud-config=https://{{MASTER_IP}}:443?inClusterConfig=0&useServiceAccount=0&auth=/kubeconfig/cluster_autoscaler.kubeconfig"
                 ],

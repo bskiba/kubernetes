@@ -74,7 +74,7 @@ func NewMetricsGrabber(c clientset.Interface, ec clientset.Interface, kubelets b
 	}
 	clusterAutoscalerNode := ""
 	if ec != nil {
-		pod, err := c.Core().Pods("kubemark").Get("cluster-autoscaler", metav1.GetOptions{})
+		pod, err := ec.Core().Pods("kubemark").Get("cluster-autoscaler", metav1.GetOptions{})
 		if err != nil {
 			glog.Warningf("Can't get pod for Cluster Autoscaler: %v", err)
 		} else {

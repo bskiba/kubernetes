@@ -43,10 +43,9 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/api"
-	kube_client "k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/kubemark"
 	"k8s.io/kubernetes/test/e2e/metrics"
-	"k8s.io/kubernetes/test/kubemark"
 	testutils "k8s.io/kubernetes/test/utils"
 
 	. "github.com/onsi/ginkgo"
@@ -197,11 +196,12 @@ func (f *Framework) BeforeEach() {
 		Expect(err).NotTo(HaveOccurred())
 		f.ClientPool = dynamic.NewClientPool(config, api.Registry.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
 		if TestContext.CloudConfig.KubemarkProvider == nil && ProviderIs("kubemark") {
-			kubemarkClient := kube_client.NewForConfigOrDie(config)
+			kubemarkClient := clientset.NewForConfigOrDie(config)
+			By(fmt.Sprintf("External: %s", TestContext.ExternalKubeConfig))
 			externalConfig, err := clientcmd.BuildConfigFromFlags("", TestContext.ExternalKubeConfig)
 			Expect(err).NotTo(HaveOccurred())
-			externalClient := kube_client.NewForConfigOrDie(externalConfig)
-			TestContext.CloudConfig.KubemarkProvider, err = kubemark.NewKubemarkProvider(externalClient, kubemarkClient, make(chan struct{}))
+			externalClient := clientset.NewForConfigOrDie(externalConfig)
+			TestContext.CloudConfig.KubemarkProvider, err = kubemark.NewProvider(externalClient, kubemarkClient, make(chan struct{}))
 			Expect(err).NotTo(HaveOccurred())
 			f.ExternalClusterClientSet, err = clientset.NewForConfig(externalConfig)
 			Expect(err).NotTo(HaveOccurred())

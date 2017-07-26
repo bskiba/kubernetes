@@ -27,7 +27,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/apis/componentconfig"
 	"k8s.io/kubernetes/pkg/cloudprovider"
-	"k8s.io/kubernetes/test/kubemark"
+	"k8s.io/kubernetes/pkg/kubemark"
 )
 
 const defaultHost = "http://127.0.0.1:8080"
