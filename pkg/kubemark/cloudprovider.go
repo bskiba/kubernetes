@@ -79,7 +79,7 @@ type kubemarkCluster struct {
 // and kubemark clusters. It returns an error if it fails to sync data from
 // any of the two clusters.
 func NewProvider(externalClient kubeclient.Interface, externalInformerFactory informers.SharedInformerFactory,
-	kubemarkClient kubeclient.Interface, kubemarkNodeInformer informersv1.NodeInformer) (*Provider, error) {
+	kubemarkClient kubeclient.Interface, kubemarkNodeInformer informersv1.NodeInformer, stopCh chan struct{}) (*Provider, error) {
 	provider := &Provider{
 		externalCluster: externalCluster{
 			rcLister:  externalInformerFactory.InformerFor(&apiv1.ReplicationController{}, newReplicationControllerInformer),
@@ -98,7 +98,7 @@ func NewProvider(externalClient kubeclient.Interface, externalInformerFactory in
 	provider.externalCluster.rcListerSynced = provider.externalCluster.rcLister.HasSynced
 	provider.externalCluster.podListerSynced = provider.externalCluster.podLister.HasSynced
 
-	// externalInformerFactory.Start(stop)
+	externalInformerFactory.Start(stopCh)
 	// for _, synced := range externalInformerFactory.WaitForCacheSync(stop) {
 	// 	if !synced {
 	// 		return nil, fmt.Errorf("failed to sync data of external cluster")
