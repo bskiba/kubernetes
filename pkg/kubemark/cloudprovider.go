@@ -26,11 +26,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
 	informersv1 "k8s.io/client-go/informers/core/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/controller"
 
 	"github.com/golang/glog"
 )
@@ -53,9 +56,11 @@ type Provider struct {
 // kubemark, in order to be able to list, create and delete hollow nodes
 // by manipulating the replication controllers.
 type externalCluster struct {
-	rcLister  cache.SharedInformer
-	podLister cache.SharedInformer
-	client    kubeclient.Interface
+	rcLister        cache.SharedInformer
+	rcListerSynced  cache.InformerSynced
+	podLister       cache.SharedInformer
+	podListerSynced cache.InformerSynced
+	client          kubeclient.Interface
 }
 
 // kubemarkCluster is used to delete nodes from kubemark cluster once their
@@ -64,7 +69,8 @@ type externalCluster struct {
 // provider for kubemark that would care for deleting the nodes.
 type kubemarkCluster struct {
 	client            kubeclient.Interface
-	nodeLister        informersv1.NodeInformer
+	nodeLister        listersv1.NodeLister
+	nodeListerSynced  cache.InformerSynced
 	nodesToDelete     map[string]bool
 	nodesToDeleteLock sync.Mutex
 }
@@ -72,46 +78,67 @@ type kubemarkCluster struct {
 // NewProvider creates Provider using the privided clients to talk to external
 // and kubemark clusters. It returns an error if it fails to sync data from
 // any of the two clusters.
-func NewProvider(externalClient kubeclient.Interface, kubemarkClient kubeclient.Interface, stop <-chan struct{}) (*Provider, error) {
-	externalInformerFactory := informers.NewSharedInformerFactory(externalClient, 0)
-	kubemarkInformerFactory := informers.NewSharedInformerFactory(kubemarkClient, 0)
-	manager := &Provider{
+func NewProvider(externalClient kubeclient.Interface, externalInformerFactory informers.SharedInformerFactory,
+	kubemarkClient kubeclient.Interface, kubemarkNodeInformer informersv1.NodeInformer) (*Provider, error) {
+	provider := &Provider{
 		externalCluster: externalCluster{
 			rcLister:  externalInformerFactory.InformerFor(&apiv1.ReplicationController{}, newReplicationControllerInformer),
 			podLister: externalInformerFactory.InformerFor(&apiv1.Pod{}, newPodInformer),
 			client:    externalClient,
 		},
 		kubemarkCluster: kubemarkCluster{
-			nodeLister:        kubemarkInformerFactory.Core().V1().Nodes(),
+			nodeLister:        kubemarkNodeInformer.Lister(),
+			nodeListerSynced:  kubemarkNodeInformer.Informer().HasSynced,
 			client:            kubemarkClient,
 			nodesToDelete:     make(map[string]bool),
 			nodesToDeleteLock: sync.Mutex{},
 		},
 	}
 
-	externalInformerFactory.Start(stop)
-	for _, synced := range externalInformerFactory.WaitForCacheSync(stop) {
-		if !synced {
-			return nil, fmt.Errorf("failed to sync data of external cluster")
-		}
-	}
-	kubemarkInformerFactory.Start(stop)
-	manager.kubemarkCluster.nodeLister.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-                UpdateFunc: manager.kubemarkCluster.removeUnneededNodes,
-        })
-	go manager.kubemarkCluster.nodeLister.Informer().Run(stop)
-	cache.WaitForCacheSync(stop, manager.kubemarkCluster.nodeLister.Informer().HasSynced)
+	provider.externalCluster.rcListerSynced = provider.externalCluster.rcLister.HasSynced
+	provider.externalCluster.podListerSynced = provider.externalCluster.podLister.HasSynced
+
+	// externalInformerFactory.Start(stop)
+	// for _, synced := range externalInformerFactory.WaitForCacheSync(stop) {
+	// 	if !synced {
+	// 		return nil, fmt.Errorf("failed to sync data of external cluster")
+	// 	}
+	// }
+	kubemarkNodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: provider.kubemarkCluster.removeUnneededNodes,
+	})
+	// go provider.kubemarkCluster.nodeLister.Informer().Run(stop)
+	// if !provider.kubemarkCluster.nodeLister.Informer().HasSynced() {
+	// 	return nil, fmt.Errorf("failed to sync data of kubemark cluster")
+	// }
 
 	rand.Seed(time.Now().UTC().UnixNano())
 
+	return provider, nil
+}
+
+func (kubemarkProvider *Provider) Run(stopCh chan struct{}) {
+	defer utilruntime.HandleCrash()
+
+	glog.Infof("starting kubemark controller")
+	defer glog.Infof("shutting down kubemark controller")
+
+	if !controller.WaitForCacheSync("kubemark", stopCh,
+		kubemarkProvider.externalCluster.rcListerSynced,
+		kubemarkProvider.externalCluster.podListerSynced,
+		kubemarkProvider.kubemarkCluster.nodeListerSynced) {
+		return
+	}
+
 	// Get hollow node template from an existing hollow node to be able to create
 	// new nodes based on it.
-	nodeTemplate, err := manager.getNodeTemplate()
+	nodeTemplate, err := kubemarkProvider.getNodeTemplate()
 	if err != nil {
-		return nil, err
+		glog.Fatalf("Failed to get node template: %s", err)
 	}
-	manager.nodeTemplate = nodeTemplate
-	return manager, nil
+	kubemarkProvider.nodeTemplate = nodeTemplate
+
+	<-stopCh
 }
 
 // GetNodeGroupForNode returns the name of the node group to which node belongs.
@@ -319,7 +346,7 @@ func (kubemarkProvider *Provider) getNodeTemplate() (*apiv1.ReplicationControlle
 }
 
 func (kubemarkCluster *kubemarkCluster) getHollowNodeName() (string, error) {
-	nodes, err := kubemarkCluster.nodeLister.Lister().List(labels.Everything())
+	nodes, err := kubemarkCluster.nodeLister.List(labels.Everything())
 	if err != nil {
 		return "", err
 	}

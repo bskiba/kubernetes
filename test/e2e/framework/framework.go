@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	staging "k8s.io/client-go/kubernetes"
 	clientreporestclient "k8s.io/client-go/rest"
@@ -195,15 +196,21 @@ func (f *Framework) BeforeEach() {
 		f.StagingClient, err = staging.NewForConfig(clientRepoConfig)
 		Expect(err).NotTo(HaveOccurred())
 		f.ClientPool = dynamic.NewClientPool(config, api.Registry.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
-		if TestContext.CloudConfig.KubemarkProvider == nil && ProviderIs("kubemark") {
-			kubemarkClient := clientset.NewForConfigOrDie(config)
-			By(fmt.Sprintf("External: %s", TestContext.ExternalKubeConfig))
+		if ProviderIs("kubemark") && TestContext.ExternalKubeConfig != "" && TestContext.CloudConfig.KubemarkProvider == nil {
 			externalConfig, err := clientcmd.BuildConfigFromFlags("", TestContext.ExternalKubeConfig)
 			Expect(err).NotTo(HaveOccurred())
 			externalClient := clientset.NewForConfigOrDie(externalConfig)
 			TestContext.CloudConfig.KubemarkProvider, err = kubemark.NewProvider(externalClient, kubemarkClient, make(chan struct{}))
 			Expect(err).NotTo(HaveOccurred())
 			f.ExternalClusterClientSet, err = clientset.NewForConfig(externalConfig)
+			f.kubemarkProviderCloseChannel = make(chan struct{})
+			externalInformerFactory := informers.NewSharedInformerFactory(externalClient, 0)
+			kubemarkInformerFactory := informers.NewSharedInformerFactory(f.ClientSet, 0)
+			kubemarkNodeInformer := kubemarkInformerFactory.Core().V1().Nodes()
+			go kubemarkNodeInformer.Informer().Run(f.kubemarkProviderCloseChannel)
+			externalInformerFactory.Start(f.kubemarkProviderCloseChannel)
+			TestContext.CloudConfig.KubemarkProvider, err = kubemark.NewProvider(externalClient, externalInformerFactory, f.ClientSet, kubemarkNodeInformer)
+			TestContext.CloudConfig.KubemarkProvider.Run(f.kubemarkProviderCloseChannel)
 			Expect(err).NotTo(HaveOccurred())
 		}
 	}
