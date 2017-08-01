@@ -84,7 +84,7 @@ func NewMetricsGrabber(c clientset.Interface, ec clientset.Interface, kubelets b
 	if !registeredMaster {
 		scheduler = false
 		controllers = false
-		clusterAutoscaler = false
+		clusterAutoscaler = ec != nil
 		glog.Warningf("Master node is not registered. Grabbing metrics from Scheduler, ControllerManager and ClusterAutoscaler is disabled.")
 	}
 
@@ -137,7 +137,7 @@ func (g *MetricsGrabber) GrabFromScheduler() (SchedulerMetrics, error) {
 }
 
 func (g *MetricsGrabber) GrabFromClusterAutoscaler() (ClusterAutoscalerMetrics, error) {
-	if !g.registeredMaster {
+	if !g.registeredMaster && g.externalClient == nil {
 		return ClusterAutoscalerMetrics{}, fmt.Errorf("Master's Kubelet is not registered. Skipping ClusterAutoscaler's metrics gathering.")
 	}
 	var client clientset.Interface
@@ -151,7 +151,7 @@ func (g *MetricsGrabber) GrabFromClusterAutoscaler() (ClusterAutoscalerMetrics, 
 		node = g.masterName
 		namespace = metav1.NamespaceSystem
 	}
-	output, err := g.getMetricsFromPod(client, fmt.Sprintf("%v-%v", "cluster-autoscaler", node), namespace, 8085)
+	output, err := g.getMetricsFromPod(client, "cluster-autoscaler"), namespace, 8085)
 	if err != nil {
 		return ClusterAutoscalerMetrics{}, err
 	}
