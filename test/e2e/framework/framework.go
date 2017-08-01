@@ -102,7 +102,7 @@ type Framework struct {
 	// Place to keep ClusterAutoscaler metrics from before test in order to compute delta.
 	clusterAutoscalerMetricsBeforeTest metrics.MetricsCollection
 
-	kubemarkProviderCloseChannel chan struct{}
+	kubemarkControllerCloseChannel chan struct{}
 }
 
 type TestDataSummary interface {
@@ -198,16 +198,18 @@ func (f *Framework) BeforeEach() {
 		f.StagingClient, err = staging.NewForConfig(clientRepoConfig)
 		Expect(err).NotTo(HaveOccurred())
 		f.ClientPool = dynamic.NewClientPool(config, api.Registry.RESTMapper(), dynamic.LegacyAPIPathResolverFunc)
-		if ProviderIs("kubemark") && TestContext.ExternalKubeConfig != "" && TestContext.CloudConfig.KubemarkProvider == nil {
+		if ProviderIs("kubemark") && TestContext.ExternalKubeConfig != "" && TestContext.CloudConfig.KubemarkController == nil {
 			externalConfig, err := clientcmd.BuildConfigFromFlags("", TestContext.ExternalKubeConfig)
 			Expect(err).NotTo(HaveOccurred())
 			f.ExternalClusterClientSet, err = clientset.NewForConfig(externalConfig)
-			f.kubemarkProviderCloseChannel = make(chan struct{})
+			f.kubemarkControllerCloseChannel = make(chan struct{})
 			externalInformerFactory := informers.NewSharedInformerFactory(f.ExternalClusterClientSet, 0)
 			kubemarkInformerFactory := informers.NewSharedInformerFactory(f.ClientSet, 0)
 			kubemarkNodeInformer := kubemarkInformerFactory.Core().V1().Nodes()
 			go kubemarkNodeInformer.Informer().Run(f.kubemarkControllerCloseChannel)
-			TestContext.CloudConfig.KubemarkController, err = kubemark.NewKubemarkController(externalClient, externalInformerFactory, f.ClientSet, kubemarkNodeInformer)
+			TestContext.CloudConfig.KubemarkController, err = kubemark.NewKubemarkController(f.ExternalClusterClientSet, externalInformerFactory, f.ClientSet, kubemarkNodeInformer)
+			externalInformerFactory.Start(f.kubemarkControllerCloseChannel)
+			TestContext.CloudConfig.KubemarkController.Run(f.kubemarkControllerCloseChannel)
 			Expect(err).NotTo(HaveOccurred())
 		}
 	}
