@@ -40,6 +40,7 @@ import (
 
 const (
 	namespaceKubemark = "kubemark"
+	hollowNodeName    = "hollow-node"
 	nodeGroupLabel    = "autoscaling.k8s.io/nodegroup"
 )
 
@@ -99,16 +100,12 @@ func NewKubemarkController(externalClient kubeclient.Interface, externalInformer
 	}
 
 	kubemarkNodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: provider.kubemarkCluster.removeUnneededNodes,
+		UpdateFunc: controller.kubemarkCluster.removeUnneededNodes,
 	})
-	// go provider.kubemarkCluster.nodeLister.Informer().Run(stop)
-	// if !provider.kubemarkCluster.nodeLister.Informer().HasSynced() {
-	// 	return nil, fmt.Errorf("failed to sync data of kubemark cluster")
-	// }
 
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	return provider, nil
+	return controller, nil
 }
 
 // Run waits for population of caches and populates the node template needed
@@ -128,32 +125,13 @@ func (kubemarkController *KubemarkController) Run(stopCh chan struct{}) {
 
 	// Get hollow node template from an existing hollow node to be able to create
 	// new nodes based on it.
-	nodeTemplate, err := kubemarkProvider.getNodeTemplate()
+	nodeTemplate, err := kubemarkController.getNodeTemplate()
 	if err != nil {
 		glog.Fatalf("Failed to get node template: %s", err)
 	}
-	kubemarkProvider.nodeTemplate = nodeTemplate
+	kubemarkController.nodeTemplate = nodeTemplate
 
 	<-stopCh
-}
-
-// GetNodeGroupForNode returns the name of the node group to which node belongs.
-// Returns an error if node group for node was not found.
-func (kubemarkProvider *Provider) GetNodeGroupForNode(node string) (string, error) {
-	for _, podObj := range kubemarkProvider.externalCluster.podLister.GetStore().List() {
-		pod, ok := podObj.(*apiv1.Pod)
-		if !ok {
-			continue
-		}
-		if pod.ObjectMeta.Name == node {
-			nodeGroup, ok := pod.ObjectMeta.Labels[nodeGroupLabel]
-			if ok {
-				return nodeGroup, nil
-			}
-			return "", fmt.Errorf("can't find nodegroup for node %s. Node exists but does not have the %s label", nodeGroupLabel, node)
-		}
-	}
-	return "", fmt.Errorf("can't find nodegroup for node %s", node)
 }
 
 // GetNodesForNodegroup returns list of the nodes in the node group.
@@ -188,19 +166,19 @@ func (kubemarkController *KubemarkController) SetNodeGroupSize(nodeGroup string,
 	}
 	switch delta := size - currSize; {
 	case delta < 0:
-		return kubemarkProvider.removeNodesFromNodeGroup(nodeGroup, -delta)
+		return kubemarkController.removeNodesFromNodeGroup(nodeGroup, -delta)
 	case delta > 0:
-		return kubemarkProvider.addNodesToNodeGroup(nodeGroup, delta)
+		return kubemarkController.addNodesToNodeGroup(nodeGroup, delta)
 	}
 	return nil
 }
 
 func (kubemarkController *KubemarkController) addNodesToNodeGroup(nodeGroup string, delta int) error {
 	if delta < 0 {
-		return fmt.Errorf("delta has to be positive. Got %d", delta)
+		return fmt.Errorf("delta has to be non negative. Got %d", delta)
 	}
 	for i := 0; i < delta; i++ {
-		if err := kubemarkProvider.addNodeToNodeGroup(nodeGroup); err != nil {
+		if err := kubemarkController.addNodeToNodeGroup(nodeGroup); err != nil {
 			return err
 		}
 	}
@@ -222,9 +200,9 @@ func (kubemarkController *KubemarkController) addNodeToNodeGroup(nodeGroup strin
 
 func (kubemarkController *KubemarkController) removeNodesFromNodeGroup(nodeGroup string, delta int) error {
 	if delta < 0 {
-		return fmt.Errorf("delta has to be positive. Got %d", delta)
+		return fmt.Errorf("delta has to be non negative. Got %d", delta)
 	}
-	nodes, err := kubemarkProvider.GetNodesForNodegroup(nodeGroup)
+	nodes, err := kubemarkController.GetNodesForNodegroup(nodeGroup)
 	if err != nil {
 		return err
 	}
@@ -232,7 +210,7 @@ func (kubemarkController *KubemarkController) removeNodesFromNodeGroup(nodeGroup
 		if i == delta {
 			return nil
 		}
-		if err := kubemarkProvider.removeNodeFromNodeGroup(nodeGroup, node); err != nil {
+		if err := kubemarkController.removeNodeFromNodeGroup(nodeGroup, node); err != nil {
 			return err
 		}
 	}
@@ -250,7 +228,7 @@ func (kubemarkController *KubemarkController) removeNodeFromNodeGroup(nodeGroup 
 				return fmt.Errorf("can't delete node %s from nodegroup %s. Node is not in nodegroup", node, nodeGroup)
 			}
 			policy := metav1.DeletePropagationForeground
-			err := kubemarkProvider.externalCluster.client.CoreV1().ReplicationControllers(namespaceKubemark).Delete(
+			err := kubemarkController.externalCluster.client.CoreV1().ReplicationControllers(namespaceKubemark).Delete(
 				pod.ObjectMeta.Labels["name"],
 				&metav1.DeleteOptions{PropagationPolicy: &policy})
 			if err != nil {
@@ -262,7 +240,7 @@ func (kubemarkController *KubemarkController) removeNodeFromNodeGroup(nodeGroup 
 			// deletion has been noticed, we will delete it explicitly.
 			// This is to cover for the fact that kubemark does not
 			// take care of this itself.
-			kubemarkProvider.kubemarkCluster.markNodeForDeletion(node)
+			kubemarkController.kubemarkCluster.markNodeForDeletion(node)
 			return nil
 		}
 	}
@@ -296,19 +274,6 @@ func (kubemarkController *KubemarkController) getNodeNameForPod(podName string) 
 	return "", fmt.Errorf("pod %s not found", podName)
 }
 
-func (kubemarkProvider *Provider) addNodeToNodeGroup(nodeGroup string) error {
-	templateCopy, err := api.Scheme.Copy(kubemarkProvider.nodeTemplate)
-	if err != nil {
-		return err
-	}
-	node := templateCopy.(*apiv1.ReplicationController)
-	node.Name = fmt.Sprintf("%s-%d", nodeGroup, rand.Int63())
-	node.Labels = map[string]string{nodeGroupLabel: nodeGroup, "name": node.Name}
-	node.Spec.Template.Labels = node.Labels
-	_, err = kubemarkProvider.externalCluster.client.CoreV1().ReplicationControllers(node.Namespace).Create(node)
-	return err
-}
-
 // getNodeTemplate returns the template for hollow node replication controllers
 // by looking for an existing hollow node specification. This requires at least
 // one kubemark node to be present on startup.
@@ -317,13 +282,11 @@ func (kubemarkController *KubemarkController) getNodeTemplate() (*apiv1.Replicat
 	if err != nil {
 		return nil, err
 	}
-	glog.Infof("%s", podName)
-	hollowNodeName, err := kubemarkProvider.getNodeNameForPod(podName)
+	hollowNodeName, err := kubemarkController.getNodeNameForPod(podName)
 	if err != nil {
 		return nil, err
 	}
-	glog.Infof("%s", hollowNodeName)
-	if hollowNode := kubemarkProvider.getReplicationControllerByName(hollowNodeName); hollowNode != nil {
+	if hollowNode := kubemarkController.getReplicationControllerByName(hollowNodeName); hollowNode != nil {
 		nodeTemplate := &apiv1.ReplicationController{
 			Spec: apiv1.ReplicationControllerSpec{
 				Template: hollowNode.Spec.Template,
@@ -337,7 +300,7 @@ func (kubemarkController *KubemarkController) getNodeTemplate() (*apiv1.Replicat
 
 		return nodeTemplate, nil
 	}
-	return nil, fmt.Errorf("can't get hollow node template, %s, %s", podName, hollowNodeName)
+	return nil, fmt.Errorf("can't get hollow node template")
 }
 
 func (kubemarkCluster *kubemarkCluster) getHollowNodeName() (string, error) {
