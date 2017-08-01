@@ -157,8 +157,8 @@ type CloudConfig struct {
 	NodeTag           string
 	MasterTag         string
 
-	Provider         cloudprovider.Interface
-	KubemarkProvider *kubemark.Provider
+	Provider           cloudprovider.Interface
+	KubemarkController *kubemark.KubemarkController
 }
 
 var TestContext TestContextType

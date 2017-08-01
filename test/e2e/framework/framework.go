@@ -206,9 +206,8 @@ func (f *Framework) BeforeEach() {
 			externalInformerFactory := informers.NewSharedInformerFactory(f.ExternalClusterClientSet, 0)
 			kubemarkInformerFactory := informers.NewSharedInformerFactory(f.ClientSet, 0)
 			kubemarkNodeInformer := kubemarkInformerFactory.Core().V1().Nodes()
-			go kubemarkNodeInformer.Informer().Run(f.kubemarkProviderCloseChannel)
-			TestContext.CloudConfig.KubemarkProvider, err = kubemark.NewProvider(f.ExternalClusterClientSet, externalInformerFactory, f.ClientSet, kubemarkNodeInformer, f.kubemarkProviderCloseChannel)
-			go TestContext.CloudConfig.KubemarkProvider.Run(f.kubemarkProviderCloseChannel)
+			go kubemarkNodeInformer.Informer().Run(f.kubemarkControllerCloseChannel)
+			TestContext.CloudConfig.KubemarkController, err = kubemark.NewKubemarkController(externalClient, externalInformerFactory, f.ClientSet, kubemarkNodeInformer)
 			Expect(err).NotTo(HaveOccurred())
 		}
 	}

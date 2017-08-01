@@ -43,10 +43,10 @@ const (
 	nodeGroupLabel    = "autoscaling.k8s.io/nodegroup"
 )
 
-// Provider is a simplified version of cloud provider for kubemark. It allows
+// KubemarkController is a simplified version of cloud provider for kubemark. It allows
 // to add and delete nodes from a kubemark cluster and introduces nodegroups
 // by applying labels to the kubemark's hollow-nodes.
-type Provider struct {
+type KubemarkController struct {
 	nodeTemplate    *apiv1.ReplicationController
 	externalCluster externalCluster
 	kubemarkCluster kubemarkCluster
@@ -56,11 +56,11 @@ type Provider struct {
 // kubemark, in order to be able to list, create and delete hollow nodes
 // by manipulating the replication controllers.
 type externalCluster struct {
-	rcLister        cache.SharedInformer
-	rcListerSynced  cache.InformerSynced
-	podLister       cache.SharedInformer
-	podListerSynced cache.InformerSynced
-	client          kubeclient.Interface
+	rcLister  listersv1.ReplicationControllerLister
+	rcSynced  cache.InformerSynced
+	podLister listersv1.PodLister
+	podSynced cache.InformerSynced
+	client    kubeclient.Interface
 }
 
 // kubemarkCluster is used to delete nodes from kubemark cluster once their
@@ -70,40 +70,34 @@ type externalCluster struct {
 type kubemarkCluster struct {
 	client            kubeclient.Interface
 	nodeLister        listersv1.NodeLister
-	nodeListerSynced  cache.InformerSynced
+	nodeSynced        cache.InformerSynced
 	nodesToDelete     map[string]bool
 	nodesToDeleteLock sync.Mutex
 }
 
-// NewProvider creates Provider using the privided clients to talk to external
-// and kubemark clusters. It returns an error if it fails to sync data from
-// any of the two clusters.
-func NewProvider(externalClient kubeclient.Interface, externalInformerFactory informers.SharedInformerFactory,
-	kubemarkClient kubeclient.Interface, kubemarkNodeInformer informersv1.NodeInformer, stopCh chan struct{}) (*Provider, error) {
-	provider := &Provider{
+// NewKubemarkController creates KubemarkController using the provided clients to talk to external
+// and kubemark clusters.
+func NewKubemarkController(externalClient kubeclient.Interface, externalInformerFactory informers.SharedInformerFactory,
+	kubemarkClient kubeclient.Interface, kubemarkNodeInformer informersv1.NodeInformer) (*KubemarkController, error) {
+	rcInformer := externalInformerFactory.InformerFor(&apiv1.ReplicationController{}, newReplicationControllerInformer)
+	podInformer := externalInformerFactory.InformerFor(&apiv1.Pod{}, newPodInformer)
+	controller := &KubemarkController{
 		externalCluster: externalCluster{
-			rcLister:  externalInformerFactory.InformerFor(&apiv1.ReplicationController{}, newReplicationControllerInformer),
-			podLister: externalInformerFactory.InformerFor(&apiv1.Pod{}, newPodInformer),
+			rcLister:  listersv1.NewReplicationControllerLister(rcInformer.GetIndexer()),
+			rcSynced:  rcInformer.HasSynced,
+			podLister: listersv1.NewPodLister(podInformer.GetIndexer()),
+			podSynced: podInformer.HasSynced,
 			client:    externalClient,
 		},
 		kubemarkCluster: kubemarkCluster{
 			nodeLister:        kubemarkNodeInformer.Lister(),
-			nodeListerSynced:  kubemarkNodeInformer.Informer().HasSynced,
+			nodeSynced:        kubemarkNodeInformer.Informer().HasSynced,
 			client:            kubemarkClient,
 			nodesToDelete:     make(map[string]bool),
 			nodesToDeleteLock: sync.Mutex{},
 		},
 	}
 
-	provider.externalCluster.rcListerSynced = provider.externalCluster.rcLister.HasSynced
-	provider.externalCluster.podListerSynced = provider.externalCluster.podLister.HasSynced
-
-	externalInformerFactory.Start(stopCh)
-	// for _, synced := range externalInformerFactory.WaitForCacheSync(stop) {
-	// 	if !synced {
-	// 		return nil, fmt.Errorf("failed to sync data of external cluster")
-	// 	}
-	// }
 	kubemarkNodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: provider.kubemarkCluster.removeUnneededNodes,
 	})
@@ -117,16 +111,18 @@ func NewProvider(externalClient kubeclient.Interface, externalInformerFactory in
 	return provider, nil
 }
 
-func (kubemarkProvider *Provider) Run(stopCh chan struct{}) {
+// Run waits for population of caches and populates the node template needed
+// for creation of kubemark nodes.
+func (kubemarkController *KubemarkController) Run(stopCh chan struct{}) {
 	defer utilruntime.HandleCrash()
 
 	glog.Infof("starting kubemark controller")
 	defer glog.Infof("shutting down kubemark controller")
 
 	if !controller.WaitForCacheSync("kubemark", stopCh,
-		kubemarkProvider.externalCluster.rcListerSynced,
-		kubemarkProvider.externalCluster.podListerSynced,
-		kubemarkProvider.kubemarkCluster.nodeListerSynced) {
+		kubemarkController.externalCluster.rcSynced,
+		kubemarkController.externalCluster.podSynced,
+		kubemarkController.kubemarkCluster.nodeSynced) {
 		return
 	}
 
@@ -161,36 +157,32 @@ func (kubemarkProvider *Provider) GetNodeGroupForNode(node string) (string, erro
 }
 
 // GetNodesForNodegroup returns list of the nodes in the node group.
-func (kubemarkProvider *Provider) GetNodesForNodegroup(nodeGroup string) ([]string, error) {
-	pods := kubemarkProvider.externalCluster.podLister.GetStore().List()
+func (kubemarkController *KubemarkController) GetNodesForNodegroup(nodeGroup string) ([]string, error) {
+	selector := labels.SelectorFromSet(labels.Set{nodeGroupLabel: nodeGroup})
+	pods, err := kubemarkController.externalCluster.podLister.List(selector)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]string, 0, len(pods))
-	for _, podObj := range pods {
-		pod, ok := podObj.(*apiv1.Pod)
-		if !ok {
-			continue
-		}
-		if pod.ObjectMeta.Labels[nodeGroupLabel] == nodeGroup {
-			result = append(result, pod.ObjectMeta.Name)
-		}
+	for _, pod := range pods {
+		result = append(result, pod.ObjectMeta.Name)
 	}
 	return result, nil
 }
 
 // GetNodeGroupSize returns the current size for the node group.
-func (kubemarkProvider *Provider) GetNodeGroupSize(nodeGroup string) (int, error) {
-	size := 0
-	for _, rcObj := range kubemarkProvider.externalCluster.rcLister.GetStore().List() {
-		rc := rcObj.(*apiv1.ReplicationController)
-		if rc.Labels[nodeGroupLabel] == nodeGroup {
-			size++
-		}
+func (kubemarkController *KubemarkController) GetNodeGroupSize(nodeGroup string) (int, error) {
+	selector := labels.SelectorFromSet(labels.Set(map[string]string{nodeGroupLabel: nodeGroup}))
+	nodes, err := kubemarkController.externalCluster.rcLister.List(selector)
+	if err != nil {
+		return 0, err
 	}
-	return size, nil
+	return len(nodes), nil
 }
 
 // SetNodeGroupSize changes the size of node group by adding or removing nodes.
-func (kubemarkProvider *Provider) SetNodeGroupSize(nodeGroup string, size int) error {
-	currSize, err := kubemarkProvider.GetNodeGroupSize(nodeGroup)
+func (kubemarkController *KubemarkController) SetNodeGroupSize(nodeGroup string, size int) error {
+	currSize, err := kubemarkController.GetNodeGroupSize(nodeGroup)
 	if err != nil {
 		return err
 	}
@@ -203,7 +195,7 @@ func (kubemarkProvider *Provider) SetNodeGroupSize(nodeGroup string, size int) e
 	return nil
 }
 
-func (kubemarkProvider *Provider) addNodesToNodeGroup(nodeGroup string, delta int) error {
+func (kubemarkController *KubemarkController) addNodesToNodeGroup(nodeGroup string, delta int) error {
 	if delta < 0 {
 		return fmt.Errorf("delta has to be positive. Got %d", delta)
 	}
@@ -215,7 +207,20 @@ func (kubemarkProvider *Provider) addNodesToNodeGroup(nodeGroup string, delta in
 	return nil
 }
 
-func (kubemarkProvider *Provider) removeNodesFromNodeGroup(nodeGroup string, delta int) error {
+func (kubemarkController *KubemarkController) addNodeToNodeGroup(nodeGroup string) error {
+	templateCopy, err := api.Scheme.Copy(kubemarkController.nodeTemplate)
+	if err != nil {
+		return err
+	}
+	node := templateCopy.(*apiv1.ReplicationController)
+	node.Name = fmt.Sprintf("%s-%d", nodeGroup, rand.Int63())
+	node.Labels = map[string]string{nodeGroupLabel: nodeGroup, "name": node.Name}
+	node.Spec.Template.Labels = node.Labels
+	_, err = kubemarkController.externalCluster.client.CoreV1().ReplicationControllers(node.Namespace).Create(node)
+	return err
+}
+
+func (kubemarkController *KubemarkController) removeNodesFromNodeGroup(nodeGroup string, delta int) error {
 	if delta < 0 {
 		return fmt.Errorf("delta has to be positive. Got %d", delta)
 	}
@@ -234,12 +239,12 @@ func (kubemarkProvider *Provider) removeNodesFromNodeGroup(nodeGroup string, del
 	return fmt.Errorf("can't remove %d nodes from %s nodegroup, not enough nodes", delta, nodeGroup)
 }
 
-func (kubemarkProvider *Provider) removeNodeFromNodeGroup(nodeGroup string, node string) error {
-	for _, podObj := range kubemarkProvider.externalCluster.podLister.GetStore().List() {
-		pod, ok := podObj.(*apiv1.Pod)
-		if !ok {
-			continue
-		}
+func (kubemarkController *KubemarkController) removeNodeFromNodeGroup(nodeGroup string, node string) error {
+	pods, err := kubemarkController.externalCluster.podLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, pod := range pods {
 		if pod.ObjectMeta.Name == node {
 			if pod.ObjectMeta.Labels[nodeGroupLabel] != nodeGroup {
 				return fmt.Errorf("can't delete node %s from nodegroup %s. Node is not in nodegroup", node, nodeGroup)
@@ -265,25 +270,12 @@ func (kubemarkProvider *Provider) removeNodeFromNodeGroup(nodeGroup string, node
 	return fmt.Errorf("can't delete node %s from nodegroup %s. Node does not exist", node, nodeGroup)
 }
 
-func (kubemarkProvider *Provider) getNodeGroupByName(nodeGroup string) *apiv1.ReplicationController {
-	for _, obj := range kubemarkProvider.externalCluster.rcLister.GetStore().List() {
-		rc, ok := obj.(*apiv1.ReplicationController)
-		if !ok {
-			continue
-		}
-		if rc.ObjectMeta.Labels[nodeGroupLabel] == nodeGroup {
-			return rc
-		}
+func (kubemarkController *KubemarkController) getReplicationControllerByName(name string) *apiv1.ReplicationController {
+	rcs, err := kubemarkController.externalCluster.rcLister.List(labels.Everything())
+	if err != nil {
+		return nil
 	}
-	return nil
-}
-
-func (kubemarkProvider *Provider) getReplicationControllerByName(name string) *apiv1.ReplicationController {
-	for _, obj := range kubemarkProvider.externalCluster.rcLister.GetStore().List() {
-		rc, ok := obj.(*apiv1.ReplicationController)
-		if !ok {
-			continue
-		}
+	for _, rc := range rcs {
 		if rc.ObjectMeta.Name == name {
 			return rc
 		}
@@ -291,9 +283,12 @@ func (kubemarkProvider *Provider) getReplicationControllerByName(name string) *a
 	return nil
 }
 
-func (kubemarkProvider *Provider) getNodeNameForPod(podName string) (string, error) {
-	for _, obj := range kubemarkProvider.externalCluster.podLister.GetStore().List() {
-		pod := obj.(*apiv1.Pod)
+func (kubemarkController *KubemarkController) getNodeNameForPod(podName string) (string, error) {
+	pods, err := kubemarkController.externalCluster.podLister.List(labels.Everything())
+	if err != nil {
+		return "", err
+	}
+	for _, pod := range pods {
 		if pod.ObjectMeta.Name == podName {
 			return pod.Labels["name"], nil
 		}
@@ -317,8 +312,8 @@ func (kubemarkProvider *Provider) addNodeToNodeGroup(nodeGroup string) error {
 // getNodeTemplate returns the template for hollow node replication controllers
 // by looking for an existing hollow node specification. This requires at least
 // one kubemark node to be present on startup.
-func (kubemarkProvider *Provider) getNodeTemplate() (*apiv1.ReplicationController, error) {
-	podName, err := kubemarkProvider.kubemarkCluster.getHollowNodeName()
+func (kubemarkController *KubemarkController) getNodeTemplate() (*apiv1.ReplicationController, error) {
+	podName, err := kubemarkController.kubemarkCluster.getHollowNodeName()
 	if err != nil {
 		return nil, err
 	}
