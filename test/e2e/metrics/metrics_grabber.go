@@ -141,17 +141,17 @@ func (g *MetricsGrabber) GrabFromClusterAutoscaler() (ClusterAutoscalerMetrics, 
 		return ClusterAutoscalerMetrics{}, fmt.Errorf("Master's Kubelet is not registered. Skipping ClusterAutoscaler's metrics gathering.")
 	}
 	var client clientset.Interface
-	var node, namespace string
+	var namespace string
 	if g.externalClient != nil {
 		client = g.externalClient
-		node = g.clusterAutoscalerNode
+		//node = g.clusterAutoscalerNode
 		namespace = "kubemark"
 	} else {
 		client = g.client
-		node = g.masterName
+		//node = g.masterName
 		namespace = metav1.NamespaceSystem
 	}
-	output, err := g.getMetricsFromPod(client, "cluster-autoscaler"), namespace, 8085)
+	output, err := g.getMetricsFromPod(client, "cluster-autoscaler", namespace, 8085)
 	if err != nil {
 		return ClusterAutoscalerMetrics{}, err
 	}
