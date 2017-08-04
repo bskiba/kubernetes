@@ -127,12 +127,12 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	})
 
 	It("should scale up at all [Feature:ClusterAutoscalerScalability1]", func() {
-		perNodeReservation := int(float64(memCapacityMb) * 0.7)
-		replicasPerNode := 30
+		perNodeReservation := int(float64(memCapacityMb) * 0.95)
+		replicasPerNode := 10
 
 		additionalNodes := maxNodes - nodeCount
 		replicas := additionalNodes * replicasPerNode
-		additionalReservation := additionalNodes * memCapacityMb
+		additionalReservation := additionalNodes * perNodeReservation
 
 
 		// saturate cluster
@@ -151,10 +151,13 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	})
 
 	It("should scale up twice [Feature:ClusterAutoscalerScalability2]", func() {
-		perNodeReservation := int(float64(memCapacityMb) * 0.7)
+		perNodeReservation := int(float64(memCapacityMb) * 0.95)
+		replicasPerNode := 10
+		additionalNodes1 := int(0.7 * maxNodes)
+		additionalNodes2 := int(0.25 * maxNodes)
 
-		replicas := int(0.7 * maxNodes)
-		replicas2 := int(0.25 * maxNodes)
+		replicas1 := additionalNodes1 * replicasPerNode
+		replicas2 := additionalNodes2 * replicasPerNode
 
 		glog.Infof("cores per node: %v", coresPerNode)
 
@@ -166,23 +169,25 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		glog.Infof("Reserved successfully")
 
 		// configure pending pods & expected scale up #1
-		rcConfig := reserveMemoryRCConfig(f, "extra-pod-1", replicas, replicas*perNodeReservation, largeScaleUpTimeout)
-		expectedResult := createClusterPredicates(nodeCount + replicas)
+		rcConfig := reserveMemoryRCConfig(f, "extra-pod-1", replicas1, additionalNodes1*perNodeReservation, largeScaleUpTimeout)
+		expectedResult := createClusterPredicates(nodeCount + additionalNodes1)
 		config := createScaleUpTestConfig(nodeCount, nodeCount, rcConfig, expectedResult)
 
+		epsilon := 0.05
+
 		// run test #1
-		testCleanup1 := simpleScaleUpTest(f, config)
+		testCleanup1 := simpleScaleUpTestWithEpsilon(f, config, epsilon)
 		defer testCleanup1()
 
 		glog.Infof("Scaled up once")
 
 		// configure pending pods & expected scale up #2
-		rcConfig2 := reserveMemoryRCConfig(f, "extra-pod-2", replicas2, replicas2*perNodeReservation, largeScaleUpTimeout)
-		expectedResult2 := createClusterPredicates(nodeCount + replicas + replicas2)
-		config2 := createScaleUpTestConfig(nodeCount+replicas, nodeCount+replicas, rcConfig2, expectedResult2)
+		rcConfig2 := reserveMemoryRCConfig(f, "extra-pod-2", replicas2, additionalNodes2*perNodeReservation, largeScaleUpTimeout)
+		expectedResult2 := createClusterPredicates(nodeCount + additionalNodes1 + additionalNodes2)
+		config2 := createScaleUpTestConfig(nodeCount+additionalNodes1, nodeCount+additionalNodes2, rcConfig2, expectedResult2)
 
 		// run test #2
-		testCleanup2 := simpleScaleUpTest(f, config2)
+		testCleanup2 := simpleScaleUpTestWithEpsilon(f, config2, epsilon)
 		defer testCleanup2()
 
 		glog.Infof("Scaled up twice")
