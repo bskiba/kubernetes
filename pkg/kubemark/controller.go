@@ -149,21 +149,12 @@ func (kubemarkController *KubemarkController) GetNodesForNodegroup(nodeGroup str
 
 // GetNodeGroupSize returns the current size for the node group.
 func (kubemarkController *KubemarkController) GetNodeGroupSize(nodeGroup string) (int, error) {
-	//selector := labels.SelectorFromSet(labels.Set{nodeGroupLabel: nodeGroup})
-	selector := labels.Everything()
+	selector := labels.SelectorFromSet(labels.Set{nodeGroupLabel: nodeGroup})
 	nodes, err := kubemarkController.externalCluster.rcLister.List(selector)
 	if err != nil {
-		fmt.Errorf("Error listing nodes: %v", err)
 		return 0, err
 	}
-	size := 0
-	for _, node := range nodes {
-		if node.Labels[nodeGroupLabel] == nodeGroup {
-			size++
-		}
-	}
-	fmt.Printf("Sizes: %d %d", len(nodes), size)
-	return size, nil
+	return len(nodes), nil
 }
 
 // SetNodeGroupSize changes the size of node group by adding or removing nodes.

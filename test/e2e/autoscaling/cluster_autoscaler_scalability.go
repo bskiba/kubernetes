@@ -42,7 +42,7 @@ const (
 	largeScaleDownTimeout = 20 * time.Minute
 	minute                = 1 * time.Minute
 
-	maxNodes = 100
+	maxNodes = 1000
 )
 
 type clusterPredicates struct {
@@ -128,8 +128,12 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 
 	It("should scale up at all [Feature:ClusterAutoscalerScalability1]", func() {
 		perNodeReservation := int(float64(memCapacityMb) * 0.7)
+		replicasPerNode := 30
 
-		replicas := maxNodes - nodeCount
+		additionalNodes := maxNodes - nodeCount
+		replicas := additionalNodes * replicasPerNode
+		additionalReservation := additionalNodes * memCapacityMb
+
 
 		// saturate cluster
 		reservationCleanup := ReserveMemory(f, "some-pod", nodeCount*2, nodeCount*perNodeReservation, true, scaleUpTimeout)
@@ -137,8 +141,8 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, c))
 
 		// configure pending pods & expected scale up
-		rcConfig := reserveMemoryRCConfig(f, "extra-pod-1", replicas, replicas*perNodeReservation, largeScaleUpTimeout)
-		expectedResult := createClusterPredicates(nodeCount + replicas)
+		rcConfig := reserveMemoryRCConfig(f, "extra-pod-1", replicas, additionalReservation, largeScaleUpTimeout)
+		expectedResult := createClusterPredicates(nodeCount + additionalNodes)
 		config := createScaleUpTestConfig(nodeCount, nodeCount, rcConfig, expectedResult)
 
 		// run test
@@ -149,8 +153,8 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	It("should scale up twice [Feature:ClusterAutoscalerScalability2]", func() {
 		perNodeReservation := int(float64(memCapacityMb) * 0.7)
 
-		replicas := 70
-		replicas2 := 25
+		replicas := int(0.7 * maxNodes)
+		replicas2 := int(0.25 * maxNodes)
 
 		glog.Infof("cores per node: %v", coresPerNode)
 
@@ -214,7 +218,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		underutilizedReservation := int64(float64(memCapacityMb) * 0.01)
 		fullReservation := int64(float64(memCapacityMb) * 0.8)
 		perNodeReplicas := 10
-		totalNodes := 100
+		totalNodes := maxNodes
 
 		// resize cluster to totalNodes
 		newSizes := map[string]int{
@@ -271,7 +275,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	It("shouldn't scale down with underutilized nodes due to host port conflicts [Feature:ClusterAutoscalerScalability5]", func() {
 		fullReservation := int(float64(memCapacityMb) * 0.9)
 		hostPortPodReservation := int(float64(memCapacityMb) * 0.3)
-		totalNodes := 100
+		totalNodes := maxNodes
 		reservedPort := 4321
 
 		// resize cluster to totalNodes
@@ -334,20 +338,35 @@ func anyKey(input map[string]int) string {
 	return ""
 }
 
-func simpleScaleUpTest(f *framework.Framework, config *scaleUpTestConfig) func() error {
+func simpleScaleUpTestWithEpsilon(f *framework.Framework, config *scaleUpTestConfig, epsilon float64) func() error {
 	// resize cluster to start size
 	// run rc based on config
 	By(fmt.Sprintf("Running RC %v from config", config.extraPods.Name))
 	start := time.Now()
 	framework.ExpectNoError(framework.RunRC(*config.extraPods))
 	// check results
-	framework.ExpectNoError(framework.WaitForClusterSize(f.ClientSet, config.expectedResult.nodes, scaleUpTimeout))
+	if epsilon > 0 && epsilon < 1 {
+		// Tolerate some number of nodes not to be created.
+		minExpectedNodeCount := int(float64(config.expectedResult.nodes) - epsilon * float64(config.expectedResult.nodes))
+		framework.ExpectNoError(WaitForClusterSizeFunc(f.ClientSet,
+			func(size int) bool { return size >= minExpectedNodeCount }, scaleUpTimeout))
+	} else {
+		framework.ExpectNoError(framework.WaitForClusterSize(f.ClientSet, config.expectedResult.nodes, scaleUpTimeout))
+	}
 	glog.Infof("cluster is increased")
-	framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, f.ClientSet))
+	if epsilon > 0 && epsilon < 0 {
+		framework.ExpectNoError(waitForCaPodsReadyInNamespace(f, f.ClientSet, int (epsilon * float64(config.extraPods.Replicas) + 1)))
+	} else {
+		framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, f.ClientSet))
+	}
 	timeTrack(start, fmt.Sprintf("Scale up to %v", config.expectedResult.nodes))
 	return func() error {
 		return framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.Namespace.Name, config.extraPods.Name)
 	}
+}
+
+func simpleScaleUpTest(f *framework.Framework, config *scaleUpTestConfig) func() error {
+	return simpleScaleUpTestWithEpsilon(f, config, 0)
 }
 
 func reserveMemoryRCConfig(f *framework.Framework, id string, replicas, megabytes int, timeout time.Duration) *testutils.RCConfig {
