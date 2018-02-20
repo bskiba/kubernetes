@@ -116,7 +116,7 @@ var (
 	// coming from components running outside of cluster
 	// (for example length of queue in cloud messaging service, or
 	// QPS from loadbalancer running outside of cluster).
-        ExternalMetricSourceType MetricSourceType = "External"
+	ExternalMetricSourceType MetricSourceType = "External"
 )
 
 // MetricSpec specifies how to scale based on a single metric
@@ -205,15 +205,16 @@ type ExternalMetricSource struct {
 	MetricName string
 	// MetricSelector is used to identify a specific time series
 	// within a given metric.
-        MetricSelector metav1.LabelSelector
+	MetricSelector metav1.LabelSelector
 	// TargetValue is the target value of the metric (as a quantity).
 	// Mutually exclusive with TargetAverageValue.
+	// +optional
 	TargetValue *resource.Quantity
 	// TargetAverageValue is the target per-pod value of global metric (as a quantity).
 	// Mutually exclusive with TargetValue.
+	// +optional
 	TargetAverageValue *resource.Quantity
 }
-
 
 // HorizontalPodAutoscalerStatus describes the current status of a horizontal pod autoscaler.
 type HorizontalPodAutoscalerStatus struct {
@@ -369,16 +370,17 @@ type ResourceMetricStatus struct {
 // ExternalMetricStatus indicates the current value of a global metric
 // not associated with any Kubernetes object.
 type ExternalMetricStatus struct {
-        // MetricName is the name of a metric used for autoscaling in
-        // metric system.
-        MetricName string
-        // MetricSelector is used to identify a specific time series
-        // within a given metric.
-        MetricSelector metav1.LabelSelector
-        // CurrentValue is the current value of the metric (as a quantity)
-        CurrentValue resource.Quantity
+	// MetricName is the name of a metric used for autoscaling in
+	// metric system.
+	MetricName string
+	// MetricSelector is used to identify a specific time series
+	// within a given metric.
+	MetricSelector metav1.LabelSelector
+	// CurrentValue is the current value of the metric (as a quantity)
+	CurrentValue resource.Quantity
 	// CurrentAverageValue is the current value of metric averaged over autoscaled pods.
-	CurrentAverageValue *resource.Quantity `json:"currentAverageValue,omitempty" protobuf:"bytes,4,opt,name=currentAverageValue"`
+	// +optional
+	CurrentAverageValue *resource.Quantity
 }
 
 // +genclient

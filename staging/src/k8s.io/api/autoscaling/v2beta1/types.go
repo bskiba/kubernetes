@@ -78,7 +78,7 @@ var (
 	// coming from components running outside of cluster
 	// (for example length of queue in cloud messaging service, or
 	// QPS from loadbalancer running outside of cluster).
-        ExternalMetricSourceType MetricSourceType = "External"
+	ExternalMetricSourceType MetricSourceType = "External"
 )
 
 // MetricSpec specifies how to scale based on a single metric
@@ -170,10 +170,12 @@ type ExternalMetricSource struct {
 	MetricSelector metav1.LabelSelector `json:"metricSelector" protobuf:"bytes,2,name=metricSelector"`
 	// TargetValue is the target value of the metric (as a quantity).
 	// Mutually exclusive with TargetAverageValue.
+	// +optional
 	TargetValue *resource.Quantity `json:"targetValue,omitempty" protobuf:"bytes,3,opt,name=targetValue"`
 	// TargetAverageValue is the target per-pod value of global metric (as a quantity).
 	// Mutually exclusive with TargetValue.
-	TargetAverageValue *resource.Quantity `json:"targetAverageValue,omitempty" protobuf="bytes,4,opt,name=targetAverageValue"`
+	// +optional
+	TargetAverageValue *resource.Quantity `json:"targetAverageValue,omitempty" protobuf:"bytes,4,opt,name=targetAverageValue"`
 }
 
 // HorizontalPodAutoscalerStatus describes the current status of a horizontal pod autoscaler.
@@ -326,6 +328,7 @@ type ExternalMetricStatus struct {
 	// CurrentValue is the current value of the metric (as a quantity)
 	CurrentValue resource.Quantity `json:"currentValue" protobuf:"bytes,3,name=currentValue"`
 	// CurrentAverageValue is the current value of metric averaged over autoscaled pods.
+	// +optional
 	CurrentAverageValue *resource.Quantity `json:"currentAverageValue,omitempty" protobuf:"bytes,4,opt,name=currentAverageValue"`
 }
 
