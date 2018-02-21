@@ -21,6 +21,7 @@ import (
 
 	autoscaling "k8s.io/api/autoscaling/v2beta1"
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -42,4 +43,8 @@ type MetricsClient interface {
 	// GetObjectMetric gets the given metric (and an associated timestamp) for the given
 	// object in the given namespace
 	GetObjectMetric(metricName string, namespace string, objectRef *autoscaling.CrossVersionObjectReference) (int64, time.Time, error)
+
+	// GetExternalMetric gets all the values of a given external metric
+	// that match the specified selector.
+	GetExternalMetric(metricName string, namespace string, selector metav1.LabelSelector) ([]int64, time.Time, error)
 }
