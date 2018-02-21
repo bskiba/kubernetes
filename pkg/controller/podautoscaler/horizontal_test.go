@@ -838,7 +838,7 @@ func TestScaleUpCMExternal(t *testing.T) {
 				External: &autoscalingv2.ExternalMetricSource{
 					MetricSelector: metav1.LabelSelector{},
 					MetricName:     "qps",
-					TargetValue:    resource.NewQuantity(15, resource.DecimalSI),
+					TargetValue:    resource.NewQuantity(1, resource.DecimalSI),
 				},
 			},
 		},
