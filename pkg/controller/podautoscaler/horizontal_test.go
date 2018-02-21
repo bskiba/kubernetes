@@ -822,6 +822,49 @@ func TestScaleUpCMObject(t *testing.T) {
 	tc.runTest(t)
 }
 
+func TestScaleUpCMExternal(t *testing.T) {
+	tc := testCase{
+		minReplicas:     2,
+		maxReplicas:     6,
+		initialReplicas: 3,
+		desiredReplicas: 4,
+		CPUTarget:       0,
+		metricsTarget: []autoscalingv2.MetricSpec{
+			{
+				Type: autoscalingv2.ObjectMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					MetricSelector: "", // TODO
+					MetricName:     "qps",
+					TargetValue:    resource.MustParse("15.0"),
+				},
+			},
+		},
+		reportedLevels: []uint64{20000},
+	}
+	tc.runTest(t)
+}
+
+func TestScaleUpCMExternalAverage(t *testing.T) {
+	tc := testCase{
+		minReplicas:     2,
+		maxReplicas:     6,
+		initialReplicas: 3,
+		desiredReplicas: 4,
+		CPUTarget:       0,
+		metricsTarget: []autoscalingv2.MetricSpec{
+			{
+				Type: autoscalingv2.ObjectMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					MetricSelector:     "", // TODO
+					MetricName:         "qps",
+					TargetAverageValue: resource.MustParse("15.0"),
+				},
+			},
+		},
+		reportedLevels: []uint64{20000, 10000, 30000},
+	}
+}
+
 func TestScaleDown(t *testing.T) {
 	tc := testCase{
 		minReplicas:         2,
@@ -881,6 +924,51 @@ func TestScaleDownCMObject(t *testing.T) {
 			},
 		},
 		reportedLevels:      []uint64{12000},
+		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
+	}
+	tc.runTest(t)
+}
+
+func TestScaleDownCMExternal(t *testing.T) {
+	tc := testCase{
+		minReplicas:     2,
+		maxReplicas:     6,
+		initialReplicas: 5,
+		desiredReplicas: 3,
+		CPUTarget:       0,
+		metricsTarget: []autoscalingv2.MetricSpec{
+			{
+				Type: autoscalingv2.ExternalMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					MetricSelector: "", // TODO
+					MetricName:     "qps",
+					TargetValue:    resource.MustParse("20.0"),
+				},
+			},
+		},
+		reportedLevels:      []uint64{12000},
+		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
+	}
+	tc.runTest(t)
+}
+func TestScaleDownCMExternalAverage(t *testing.T) {
+	tc := testCase{
+		minReplicas:     2,
+		maxReplicas:     6,
+		initialReplicas: 5,
+		desiredReplicas: 3,
+		CPUTarget:       0,
+		metricsTarget: []autoscalingv2.MetricSpec{
+			{
+				Type: autoscalingv2.ExternalMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					MetricSelector:     "", // TODO
+					MetricName:         "qps",
+					TargetAverageValue: resource.MustParse("20.0"),
+				},
+			},
+		},
+		reportedLevels:      []uint64{12000, 12000, 12000, 12000, 12000},
 		reportedCPURequests: []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
 	}
 	tc.runTest(t)
@@ -965,6 +1053,33 @@ func TestToleranceCMObject(t *testing.T) {
 					},
 					MetricName:  "qps",
 					TargetValue: resource.MustParse("20.0"),
+				},
+			},
+		},
+		reportedLevels:      []uint64{20050},
+		reportedCPURequests: []resource.Quantity{resource.MustParse("0.9"), resource.MustParse("1.0"), resource.MustParse("1.1")},
+		expectedConditions: statusOkWithOverrides(autoscalingv2.HorizontalPodAutoscalerCondition{
+			Type:   autoscalingv2.AbleToScale,
+			Status: v1.ConditionTrue,
+			Reason: "ReadyForNewScale",
+		}),
+	}
+	tc.runTest(t)
+}
+
+func TestToleranceCMExternal(t *testing.T) {
+	tc := testCase{
+		minReplicas:     1,
+		maxReplicas:     5,
+		initialReplicas: 3,
+		desiredReplicas: 3,
+		metricsTarget: []autoscalingv2.MetricSpec{
+			{
+				Type: autoscalingv2.ExternalMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					MetricSelector: "", // TODO
+					MetricName:     "qps",
+					TargetValue:    resource.MustParse("20.0"),
 				},
 			},
 		},
