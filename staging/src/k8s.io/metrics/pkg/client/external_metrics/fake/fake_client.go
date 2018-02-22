@@ -17,7 +17,6 @@ limitations under the License.
 package fake
 
 import (
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/testing"
@@ -27,7 +26,7 @@ import (
 
 type GetForActionImpl struct {
 	testing.GetAction
-	MetricName    string
+	MetricName     string
 	MetricSelector metav1.LabelSelector
 }
 
@@ -41,7 +40,7 @@ func (i GetForActionImpl) GetMetricName() string {
 	return i.MetricName
 }
 
-func (i GetForActionImpl) GetLabelSelector() metav1.LabelSelector {
+func (i GetForActionImpl) GetMetricSelector() metav1.LabelSelector {
 	return i.MetricSelector
 }
 
@@ -49,21 +48,14 @@ func (i GetForActionImpl) GetSubresource() string {
 	return i.MetricName
 }
 
-func NewGetForAction(groupKind schema.GroupKind, namespace, name string, metricName string, labelSelector metav1.LabelSelector) GetForActionImpl {
-	// the version doesn't matter
-	gvk := groupKind.WithVersion("")
-	gvr, _ := meta.UnsafeGuessKindToResource(gvk)
-	groupResourceForKind := schema.GroupResource{
-		Group:    gvr.Group,
-		Resource: gvr.Resource,
-	}
+func NewGetForAction(namespace string, metricName string, labelSelector metav1.LabelSelector) GetForActionImpl {
 	resource := schema.GroupResource{
 		Group:    v1beta1.SchemeGroupVersion.Group,
-		Resource: groupResourceForKind.String(),
+		Resource: "externalmetrics",
 	}
 	return GetForActionImpl{
-		GetAction:     testing.NewGetAction(resource.WithVersion(""), namespace, name),
-		MetricName:    metricName,
+		GetAction:      testing.NewGetAction(resource.WithVersion(""), namespace, metricName),
+		MetricName:     metricName,
 		MetricSelector: labelSelector,
 	}
 }
@@ -85,14 +77,12 @@ type fakeNamespacedMetrics struct {
 }
 
 func (m *fakeNamespacedMetrics) Get(metricName string, metricSelector metav1.LabelSelector) (*v1beta1.ExternalMetricValueList, error) {
-//	obj, err := m.Fake.
-//		Invokes(NewRootGetForAction(groupKind, "*", metricName, selector), &v1beta1.MetricValueList{})
-	obj := &v1beta1.ExternalMetricValueList{}
-	var err error
+	obj, err := m.Fake.
+		Invokes(NewGetForAction(m.ns, metricName, metricSelector), &v1beta1.ExternalMetricValueList{})
 
 	if obj == nil {
 		return nil, err
 	}
 
-	return obj, err
+	return obj.(*v1beta1.ExternalMetricValueList), err
 }

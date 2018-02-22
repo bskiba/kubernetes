@@ -10,12 +10,10 @@ go_library(
     srcs = ["fake_client.go"],
     importpath = "k8s.io/metrics/pkg/client/external_metrics/fake",
     deps = [
-        "//vendor/k8s.io/apimachinery/pkg/api/meta:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
-        "//vendor/k8s.io/apimachinery/pkg/labels:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
         "//vendor/k8s.io/client-go/testing:go_default_library",
-        "//vendor/k8s.io/metrics/pkg/apis/custom_metrics/v1beta1:go_default_library",
+        "//vendor/k8s.io/metrics/pkg/apis/external_metrics/v1beta1:go_default_library",
         "//vendor/k8s.io/metrics/pkg/client/external_metrics:go_default_library",
     ],
 )
