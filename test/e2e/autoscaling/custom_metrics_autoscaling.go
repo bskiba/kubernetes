@@ -18,6 +18,7 @@ package autoscaling
 
 import (
 	"context"
+	"math"
 	"time"
 
 	gcm "google.golang.org/api/monitoring/v3"
@@ -39,6 +40,9 @@ const (
 	stackdriverExporterDeployment = "stackdriver-exporter-deployment"
 	dummyDeploymentName           = "dummy-deployment"
 	stackdriverExporterPod        = "stackdriver-exporter-pod"
+	myExternalMetricValue         = 85
+	otherExternalMetricValue      = 44
+	externalMetricName            = "my-external-metric"
 )
 
 var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Metrics from Stackdriver)", func() {
@@ -55,7 +59,7 @@ var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Me
 		metricValue := int64(100)
 		metricTarget := 2 * metricValue
 		deployment := monitoring.SimpleStackdriverExporterDeployment(stackdriverExporterDeployment, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
-		customMetricTest(f, f.ClientSet, simplePodsHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, nil, initialReplicas, scaledReplicas)
+		customMetricTest(f, f.ClientSet, simplePodsHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, nil, initialReplicas, scaledReplicas, false /* isExternal */)
 	})
 
 	It("should scale down with Custom Metric of type Object from Stackdriver [Feature:CustomMetricsAutoscaling]", func() {
@@ -64,9 +68,32 @@ var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Me
 		// metric should cause scale down
 		metricValue := int64(100)
 		metricTarget := 2 * metricValue
+		// Metric exported by deployment is ignored
 		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
 		pod := monitoring.StackdriverExporterPod(stackdriverExporterPod, f.Namespace.Name, stackdriverExporterPod, monitoring.CustomMetricName, metricValue)
-		customMetricTest(f, f.ClientSet, objectHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, pod, initialReplicas, scaledReplicas)
+		customMetricTest(f, f.ClientSet, objectHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, pod, initialReplicas, scaledReplicas, false /* isExternal */)
+	})
+
+	It("should scale down with Custom Metric of type External with target value [Feature:CustomMetricsAutoscaling]", func() {
+		initialReplicas := 2
+		scaledReplicas := 1
+		// metric should cause scale down
+		metricValue := int64(myExternalMetricValue) // This is currently hard-coded in adapter.
+		metricTarget := 2 * metricValue
+		// Exported metric is ignored
+		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
+		customMetricTest(f, f.ClientSet, simpleExternalHPA(f.Namespace.ObjectMeta.Name, metricTarget, false /* isTargetAverage */), deployment, nil, initialReplicas, scaledReplicas, true /* isExternal */)
+	})
+
+	It("should scale down with Custom Metric of type External with target average value [Feature:CustomMetricsAutoscaling]", func() {
+		initialReplicas := 2
+		scaledReplicas := 1
+		// metric should cause scale down
+		metricAverageValue := int64(math.Ceil(float64(myExternalMetricValue) / float64(initialReplicas)))
+		metricAverageTarget := 2 * metricAverageValue
+		// Metric exported by deployment is ignored
+		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricAverageValue)
+		customMetricTest(f, f.ClientSet, simpleExternalHPA(f.Namespace.ObjectMeta.Name, metricAverageTarget, true /* isTargetAverage */), deployment, nil, initialReplicas, scaledReplicas, true /* isExternal */)
 	})
 
 	It("should scale down with Custom Metric of type Pod from Stackdriver with Prometheus [Feature:CustomMetricsAutoscaling]", func() {
@@ -76,7 +103,7 @@ var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Me
 		metricValue := int64(100)
 		metricTarget := 2 * metricValue
 		deployment := monitoring.PrometheusExporterDeployment(stackdriverExporterDeployment, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
-		customMetricTest(f, f.ClientSet, simplePodsHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, nil, initialReplicas, scaledReplicas)
+		customMetricTest(f, f.ClientSet, simplePodsHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, nil, initialReplicas, scaledReplicas, false /* isExternal */)
 	})
 
 	It("should scale up with two metrics of type Pod from Stackdriver [Feature:CustomMetricsAutoscaling]", func() {
@@ -102,12 +129,37 @@ var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Me
 		}
 		metricTargets := map[string]int64{"metric1": metric1Target, "metric2": metric2Target}
 		deployment := monitoring.StackdriverExporterDeployment(stackdriverExporterDeployment, f.Namespace.ObjectMeta.Name, int32(initialReplicas), containers)
-		customMetricTest(f, f.ClientSet, podsHPA(f.Namespace.ObjectMeta.Name, stackdriverExporterDeployment, metricTargets), deployment, nil, initialReplicas, scaledReplicas)
+		customMetricTest(f, f.ClientSet, podsHPA(f.Namespace.ObjectMeta.Name, stackdriverExporterDeployment, metricTargets), deployment, nil, initialReplicas, scaledReplicas, false /* isExternal */)
+	})
+
+	It("should scale up with two metrics of type External [Feature:CustomMetricsAutoscaling]", func() {
+		initialReplicas := 1
+		scaledReplicas := 3
+		// metric 1 would cause a scale down, if not for metric 2
+		metric1Value := int64(myExternalMetricValue)
+		metric1Target := 2 * metric1Value
+		// metric2 should cause a scale up
+		metric2Value := int64(otherExternalMetricValue)
+		metric2Target := int64(math.Ceil(0.5 * float64(metric2Value)))
+		metricTargets := map[string]externalMetricTarget{
+			"my-external-metric": externalMetricTarget{
+				value:     metric1Target,
+				isAverage: false,
+				selector:  map[string]string{"foo": "bar"},
+			},
+			"other-external-metric": externalMetricTarget{
+				value:     metric2Target,
+				isAverage: false,
+			},
+		}
+		// Metric exported by deployment doesn't matter.
+		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), 0 /* ignored */)
+		customMetricTest(f, f.ClientSet, externalHPA(f.Namespace.ObjectMeta.Name, metricTargets), deployment, nil, initialReplicas, scaledReplicas, true /* isExternal */)
 	})
 })
 
 func customMetricTest(f *framework.Framework, kubeClient clientset.Interface, hpa *as.HorizontalPodAutoscaler,
-	deployment *extensions.Deployment, pod *corev1.Pod, initialReplicas, scaledReplicas int) {
+	deployment *extensions.Deployment, pod *corev1.Pod, initialReplicas, scaledReplicas int, isExternal bool) {
 	projectId := framework.TestContext.CloudConfig.ProjectID
 
 	ctx := context.Background()
@@ -138,11 +190,15 @@ func customMetricTest(f *framework.Framework, kubeClient clientset.Interface, hp
 	}
 	defer monitoring.CleanupDescriptors(gcmService, projectId)
 
-	err = monitoring.CreateAdapter(monitoring.AdapterDefault)
+	adapter := monitoring.AdapterDefault
+	if isExternal {
+		adapter = monitoring.AdapterExternal
+	}
+	err = monitoring.CreateAdapter(adapter)
 	if err != nil {
 		framework.Failf("Failed to set up: %v", err)
 	}
-	defer monitoring.CleanupAdapter(monitoring.AdapterDefault)
+	defer monitoring.CleanupAdapter(adapter)
 
 	// Run application that exports the metric
 	err = createDeploymentToScale(f, kubeClient, deployment, pod)
@@ -252,6 +308,56 @@ func objectHPA(namespace string, metricTarget int64) *as.HorizontalPodAutoscaler
 			},
 		},
 	}
+}
+
+type externalMetricTarget struct {
+	value     int64
+	isAverage bool
+	selector  map[string]string
+}
+
+func simpleExternalHPA(namespace string, metricTarget int64, isTargetAverage bool) *as.HorizontalPodAutoscaler {
+	return externalHPA(namespace, map[string]externalMetricTarget{
+		externalMetricName: externalMetricTarget{value: metricTarget, isAverage: isTargetAverage, selector: map[string]string{"foo": "bar"}}})
+}
+
+func externalHPA(namespace string, metricTargets map[string]externalMetricTarget) *as.HorizontalPodAutoscaler {
+	var minReplicas int32 = 1
+	metricSpecs := []as.MetricSpec{}
+	for metric, target := range metricTargets {
+		var metricSpec as.MetricSpec
+		metricSpec = as.MetricSpec{
+			Type: as.ExternalMetricSourceType,
+			External: &as.ExternalMetricSource{
+				MetricName:     metric,
+				MetricSelector: &metav1.LabelSelector{MatchLabels: target.selector},
+			},
+		}
+		if target.isAverage {
+			metricSpec.External.TargetAverageValue = resource.NewQuantity(target.value, resource.DecimalSI)
+		} else {
+			metricSpec.External.TargetValue = resource.NewQuantity(target.value, resource.DecimalSI)
+		}
+		metricSpecs = append(metricSpecs, metricSpec)
+	}
+	hpa := &as.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-metrics-external-hpa",
+			Namespace: namespace,
+		},
+		Spec: as.HorizontalPodAutoscalerSpec{
+			Metrics:     metricSpecs,
+			MaxReplicas: 3,
+			MinReplicas: &minReplicas,
+			ScaleTargetRef: as.CrossVersionObjectReference{
+				APIVersion: "extensions/v1beta1",
+				Kind:       "Deployment",
+				Name:       dummyDeploymentName,
+			},
+		},
+	}
+
+	return hpa
 }
 
 func waitForReplicas(deploymentName, namespace string, cs clientset.Interface, timeout time.Duration, desiredReplicas int) {

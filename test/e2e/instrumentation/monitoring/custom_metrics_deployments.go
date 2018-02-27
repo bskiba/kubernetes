@@ -20,13 +20,14 @@ import (
 	"fmt"
 	"strings"
 
+	"os/exec"
+
 	gcm "google.golang.org/api/monitoring/v3"
 	corev1 "k8s.io/api/core/v1"
 	extensions "k8s.io/api/extensions/v1beta1"
 	rbac "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
-	"os/exec"
 )
 
 var (
@@ -58,6 +59,7 @@ var (
 	AdapterForOldResourceModel = "adapter_old_resource_model.yaml"
 	AdapterForNewResourceModel = "adapter_new_resource_model.yaml"
 	AdapterDefault             = AdapterForOldResourceModel
+	AdapterExternal            = "https://raw.githubusercontent.com/bskiba/custom-metrics-apiserver/deploy/deploy/sample-adapter.yaml"
 	ClusterAdminBinding        = "e2e-test-cluster-admin-binding"
 )
 
@@ -249,6 +251,9 @@ func CreateAdapter(adapterDeploymentFile string) error {
 		return err
 	}
 	adapterURL := StagingDeploymentsLocation + adapterDeploymentFile
+	if adapterDeploymentFile == AdapterExternal {
+		adapterURL = AdapterExternal
+	}
 	err = exec.Command("wget", adapterURL).Run()
 	if err != nil {
 		return err
@@ -307,6 +312,7 @@ func CleanupDescriptors(service *gcm.Service, projectId string) {
 // CleanupAdapter deletes Custom Metrics - Stackdriver adapter deployments.
 func CleanupAdapter(adapterDeploymentFile string) {
 	stat, err := framework.RunKubectl("delete", "-f", adapterDeploymentFile)
+
 	framework.Logf(stat)
 	if err != nil {
 		framework.Logf("Failed to delete adapter deployments: %s", err)
