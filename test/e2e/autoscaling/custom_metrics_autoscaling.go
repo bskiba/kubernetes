@@ -39,6 +39,7 @@ const (
 	stackdriverExporterDeployment = "stackdriver-exporter-deployment"
 	dummyDeploymentName           = "dummy-deployment"
 	stackdriverExporterPod        = "stackdriver-exporter-pod"
+	magicalExternalMetricValue    = 85
 )
 
 var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Metrics from Stackdriver)", func() {
@@ -64,9 +65,32 @@ var _ = SIGDescribe("[HPA] Horizontal pod autoscaling (scale resource: Custom Me
 		// metric should cause scale down
 		metricValue := int64(100)
 		metricTarget := 2 * metricValue
+		// Metric exported by deployment is ignored
 		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
 		pod := monitoring.StackdriverExporterPod(stackdriverExporterPod, f.Namespace.Name, stackdriverExporterPod, monitoring.CustomMetricName, metricValue)
 		customMetricTest(f, f.ClientSet, objectHPA(f.Namespace.ObjectMeta.Name, metricTarget), deployment, pod, initialReplicas, scaledReplicas)
+	})
+
+	It("should scale down with Custom Metric of type External with target value from Stackdriver [Feature:CustomMetricsExternalAutoscaling]", func() {
+		initialReplicas := 2
+		scaledReplicas := 1
+		// metric should cause scale down
+		metricValue := int64(magicalExternalMetricValue) // This is currently hard-coded in adapter.
+		metricTarget := 2 * metricValue
+		// Exported metric is ignored
+		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricValue)
+		customMetricTest(f, f.ClientSet, externalHPA(f.Namespace.ObjectMeta.Name, metricTarget, false /* isTargetAverage */), deployment, nil, initialReplicas, scaledReplicas)
+	})
+
+	It("should scale down with Custom Metric of type External with target average from Stackdriver [Feature:CustomMetricsExternalAutoscaling]", func() {
+		initialReplicas := 2
+		scaledReplicas := 1
+		// metric should cause scale down
+		metricAverageValue := int64(magicalExternalMetricValue / initialReplicas)
+		metricAverageTarget := 2 * metricAverageValue
+		// Metric exported by deployment is ignored
+		deployment := monitoring.SimpleStackdriverExporterDeployment(dummyDeploymentName, f.Namespace.ObjectMeta.Name, int32(initialReplicas), metricAverageValue)
+		customMetricTest(f, f.ClientSet, externalHPA(f.Namespace.ObjectMeta.Name, metricAverageTarget, true /* isTargetAverage */), deployment, nil, initialReplicas, scaledReplicas)
 	})
 
 	It("should scale down with Custom Metric of type Pod from Stackdriver with Prometheus [Feature:CustomMetricsAutoscaling]", func() {
@@ -252,6 +276,48 @@ func objectHPA(namespace string, metricTarget int64) *as.HorizontalPodAutoscaler
 			},
 		},
 	}
+}
+
+func externalHPA(namespace string, metricTarget int64, isTargetAverage bool) *as.HorizontalPodAutoscaler {
+	var minReplicas int32 = 1
+	var metricSpec as.MetricSpec
+	if isTargetAverage {
+		metricSpec = as.MetricSpec{
+			Type: as.ExternalMetricSourceType,
+			External: &as.ExternalMetricSource{
+				MetricName:         monitoring.CustomMetricName,
+				MetricSelector:     metav1.LabelSelector{},
+				TargetAverageValue: resource.NewQuantity(metricTarget, resource.DecimalSI),
+			},
+		}
+	} else {
+		metricSpec = as.MetricSpec{
+			Type: as.ExternalMetricSourceType,
+			External: &as.ExternalMetricSource{
+				MetricName:     monitoring.CustomMetricName,
+				MetricSelector: metav1.LabelSelector{},
+				TargetValue:    resource.NewQuantity(metricTarget, resource.DecimalSI),
+			},
+		}
+	}
+	hpa := &as.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-metrics-external-hpa",
+			Namespace: namespace,
+		},
+		Spec: as.HorizontalPodAutoscalerSpec{
+			Metrics:     []as.MetricSpec{metricSpec},
+			MaxReplicas: 3,
+			MinReplicas: &minReplicas,
+			ScaleTargetRef: as.CrossVersionObjectReference{
+				APIVersion: "extensions/v1beta1",
+				Kind:       "Deployment",
+				Name:       dummyDeploymentName,
+			},
+		},
+	}
+
+	return hpa
 }
 
 func waitForReplicas(deploymentName, namespace string, cs clientset.Interface, timeout time.Duration, desiredReplicas int) {

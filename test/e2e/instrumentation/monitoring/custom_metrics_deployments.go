@@ -212,7 +212,7 @@ func prometheusExporterPodSpec(metricName string, metricValue int64, port int32)
 
 // CreateAdapter creates Custom Metrics - Stackdriver adapter.
 func CreateAdapter() error {
-	stat, err := framework.RunKubectl("create", "-f", "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/adapter-beta.yaml")
+	stat, err := framework.RunKubectl("create", "-f", "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/adapter-staging.yaml")
 	framework.Logf(stat)
 	return err
 }
@@ -252,7 +252,7 @@ func CleanupDescriptors(service *gcm.Service, projectId string) {
 
 // CleanupAdapter deletes Custom Metrics - Stackdriver adapter deployments.
 func CleanupAdapter() error {
-	stat, err := framework.RunKubectl("delete", "-f", "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/adapter-beta.yaml")
+	stat, err := framework.RunKubectl("delete", "-f", "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/adapter-staging.yaml")
 	framework.Logf(stat)
 	return err
 }
