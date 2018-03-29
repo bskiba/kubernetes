@@ -101,7 +101,7 @@ func testCustomMetrics(f *framework.Framework, kubeClient clientset.Interface, c
 	}
 	defer CleanupDescriptors(gcmService, projectId)
 
-	err = CreateAdapter(adapterDeployment)
+	err = CreateStackdriverAdapter(adapterDeployment)
 	if err != nil {
 		framework.Failf("Failed to set up: %s", err)
 	}
@@ -144,7 +144,7 @@ func testExternalMetrics(f *framework.Framework, kubeClient clientset.Interface,
 	defer CleanupDescriptors(gcmService, projectId)
 
 	// Both deployments - for old and new resource model - expose External Metrics API.
-	err = CreateAdapter(AdapterForNewResourceModel)
+	err = CreateStackdriverAdapter(AdapterForNewResourceModel)
 	if err != nil {
 		framework.Failf("Failed to set up: %s", err)
 	}

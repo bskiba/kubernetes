@@ -20,13 +20,14 @@ import (
 	"fmt"
 	"strings"
 
+	"os/exec"
+
 	gcm "google.golang.org/api/monitoring/v3"
 	corev1 "k8s.io/api/core/v1"
 	extensions "k8s.io/api/extensions/v1beta1"
 	rbac "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
-	"os/exec"
 )
 
 var (
@@ -58,6 +59,8 @@ var (
 	AdapterForOldResourceModel = "adapter_old_resource_model.yaml"
 	AdapterForNewResourceModel = "adapter_new_resource_model.yaml"
 	AdapterDefault             = AdapterForOldResourceModel
+	FakeAdapterLocation        = "https://raw.githubusercontent.com/bskiba/custom-metrics-apiserver/deploy/deploy/"
+	FakeAdapter                = "sample-adapter.yaml"
 	ClusterAdminBinding        = "e2e-test-cluster-admin-binding"
 )
 
@@ -238,9 +241,15 @@ func prometheusExporterPodSpec(metricName string, metricValue int64, port int32)
 	}
 }
 
-// CreateAdapter creates Custom Metrics - Stackdriver adapter
+// CreateStackdriverAdapter creates Custom Metrics - Stackdriver adapter
 // adapterDeploymentFile should be a filename for adapter deployment located in StagingDeploymentLocation
-func CreateAdapter(adapterDeploymentFile string) error {
+func CreateStackdriverAdapter(adapterDeploymentFile string) error {
+	return CreateAdapter(StagingDeploymentsLocation, adapterDeploymentFile)
+}
+
+// CreateAdapter creates Custom Metrics adapter from the deployment file given
+// by adapterURL
+func CreateAdapter(adapterLocation, adapterDeploymentFile string) error {
 	// A workaround to make the work on GKE. GKE doesn't normally allow to create cluster roles,
 	// which the adapter deployment does. The solution is to create cluster role binding for
 	// cluster-admin role and currently used service account.
@@ -248,12 +257,13 @@ func CreateAdapter(adapterDeploymentFile string) error {
 	if err != nil {
 		return err
 	}
-	adapterURL := StagingDeploymentsLocation + adapterDeploymentFile
-	err = exec.Command("wget", adapterURL).Run()
+	adapterURL := adapterLocation + adapterDeploymentFile
+	err = exec.Command("wget", adapterURL, "-O", adapterDeploymentFile).Run()
 	if err != nil {
 		return err
 	}
-	stat, err := framework.RunKubectl("create", "-f", adapterURL)
+	stat, err := framework.RunKubectl("create", "-f", adapterDeploymentFile)
+
 	framework.Logf(stat)
 	return err
 }
