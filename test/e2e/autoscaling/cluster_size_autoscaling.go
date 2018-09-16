@@ -893,7 +893,8 @@ var _ = SIGDescribe("Cluster size autoscaling [Slow]", func() {
 			} else {
 				ReserveMemory(f, "memory-reservation", 100, nodeCount*memAllocatableMb, false, defaultTimeout)
 				defer framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, "memory-reservation")
-				time.Sleep(scaleUpTimeout)
+				// TODO(bskiba): Switch back to scaleUpTimeout once we figure out how to correctly test for unhealthiness.
+				time.Sleep(15 * time.Minute)
 				currentNodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
 				framework.Logf("Currently available nodes: %v, nodes available at the start of test: %v, disabled nodes: %v", len(currentNodes.Items), len(nodes.Items), nodesToBreakCount)
 				Expect(len(currentNodes.Items)).Should(Equal(len(nodes.Items) - nodesToBreakCount))
